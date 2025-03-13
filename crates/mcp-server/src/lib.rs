@@ -199,6 +199,7 @@ where
                         JsonRpcMessage::Response(_)
                         | JsonRpcMessage::Notification(_)
                         | JsonRpcMessage::Nil
+                        | JsonRpcMessage::Empty(_)
                         | JsonRpcMessage::Error(_) => {
                             // Ignore responses, notifications and nil messages for now
                             continue;

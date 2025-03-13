@@ -11,10 +11,10 @@ use mcp_core::{
     handler::{PromptError, ResourceError, ToolError},
     prompt::{Prompt, PromptMessage, PromptMessageRole},
     protocol::{
-        CallToolResult, GetPromptResult, Implementation, InitializeResult, JsonRpcRequest,
-        JsonRpcResponse, ListPromptsResult, ListResourcesResult, ListToolsResult,
-        PromptsCapability, ReadResourceResult, ResourcesCapability, ServerCapabilities,
-        ToolsCapability,
+        CallToolResult, EmptyResult, GetPromptResult, Implementation, InitializeResult,
+        JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, ListPromptsResult, ListResourcesResult,
+        ListToolsResult, PromptsCapability, ReadResourceResult, ResourcesCapability,
+        ServerCapabilities, ToolsCapability,
     },
     Resource, ResourceContents,
 };
@@ -416,7 +416,7 @@ impl<T> Service<JsonRpcRequest> for RouterService<T>
 where
     T: Router + Clone + Send + Sync + 'static,
 {
-    type Response = JsonRpcResponse;
+    type Response = JsonRpcMessage;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -428,14 +428,13 @@ where
         let this = self.0.clone();
 
         Box::pin(async move {
+            // Early exit on ping as its not a [`JsonRpcResponse`].
+            if req.method.as_str() == "ping" {
+                return Ok(JsonRpcMessage::Empty(EmptyResult {}));
+            };
+
             let result = match req.method.as_str() {
                 "initialize" => this.handle_initialize(req).await,
-                "ping" => {
-                    let mut response = this.create_response(req.id);
-                    // Empty result to be compatible with the client deserialization.
-                    response.result = Some(Value::String("".to_string()));
-                    Ok(response)
-                }
                 "tools/list" => this.handle_tools_list(req).await,
                 "tools/call" => this.handle_tools_call(req).await,
                 "resources/list" => this.handle_resources_list(req).await,
@@ -448,8 +447,7 @@ where
                     Ok(response)
                 }
             };
-
-            result.map_err(BoxError::from)
+            result.map(JsonRpcMessage::Response).map_err(BoxError::from)
         })
     }
 }
