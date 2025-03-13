@@ -416,7 +416,7 @@ impl<T> Service<JsonRpcRequest> for RouterService<T>
 where
     T: Router + Clone + Send + Sync + 'static,
 {
-    type Response = JsonRpcMessage;
+    type Response = JsonRpcResponse;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -447,7 +447,7 @@ where
                     Ok(response)
                 }
             };
-            result.map(JsonRpcMessage::Response).map_err(BoxError::from)
+            result.map_err(BoxError::from)
         })
     }
 }
