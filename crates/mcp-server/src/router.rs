@@ -18,7 +18,7 @@ use mcp_core::{
     },
     Resource, ResourceContents,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tower_service::Service;
 
 use crate::{BoxError, RouterError};
@@ -428,11 +428,6 @@ where
         let this = self.0.clone();
 
         Box::pin(async move {
-            // Early exit on ping as its not a [`JsonRpcResponse`].
-            if req.method.as_str() == "ping" {
-                return Ok(JsonRpcMessage::Empty(EmptyResult {}));
-            };
-
             let result = match req.method.as_str() {
                 "initialize" => this.handle_initialize(req).await,
                 "tools/list" => this.handle_tools_list(req).await,
@@ -441,6 +436,11 @@ where
                 "resources/read" => this.handle_resources_read(req).await,
                 "prompts/list" => this.handle_prompts_list(req).await,
                 "prompts/get" => this.handle_prompts_get(req).await,
+                "ping" => {
+                    let mut response = this.create_response(req.id);
+                    response.result = Some(Value::Object(Map::new()));
+                    Ok(response)
+                }
                 _ => {
                     let mut response = this.create_response(req.id);
                     response.error = Some(RouterError::MethodNotFound(req.method).into());
