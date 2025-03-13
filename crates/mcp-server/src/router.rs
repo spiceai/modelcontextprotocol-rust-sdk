@@ -4,21 +4,21 @@ use std::{
     task::{Context, Poll},
 };
 
-type PromptFuture = Pin<Box<dyn Future<Output = Result<String, PromptError>> + Send + 'static>>;
+type PromptFuture<'a> = Pin<Box<dyn Future<Output = Result<String, PromptError>> + Send + 'a>>;
 
 use mcp_core::{
     content::Content,
     handler::{PromptError, ResourceError, ToolError},
     prompt::{Prompt, PromptMessage, PromptMessageRole},
     protocol::{
-        CallToolResult, GetPromptResult, Implementation, InitializeResult, JsonRpcRequest,
-        JsonRpcResponse, ListPromptsResult, ListResourcesResult, ListToolsResult,
-        PromptsCapability, ReadResourceResult, ResourcesCapability, ServerCapabilities,
-        ToolsCapability,
+        CallToolResult, EmptyResult, GetPromptResult, Implementation, InitializeResult,
+        JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, ListPromptsResult, ListResourcesResult,
+        ListToolsResult, PromptsCapability, ReadResourceResult, ResourcesCapability,
+        ServerCapabilities, ToolsCapability,
     },
-    ResourceContents,
+    Resource, ResourceContents,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tower_service::Service;
 
 use crate::{BoxError, RouterError};
@@ -81,23 +81,30 @@ impl CapabilitiesBuilder {
     }
 }
 
-pub trait Router: Send + Sync + 'static {
+pub trait Router: Send + Sync {
     fn name(&self) -> String;
     // in the protocol, instructions are optional but we make it required
     fn instructions(&self) -> String;
     fn capabilities(&self) -> ServerCapabilities;
-    fn list_tools(&self) -> Vec<mcp_core::tool::Tool>;
+    fn list_tools(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<mcp_core::tool::Tool>, ToolError>> + Send + '_>>;
     fn call_tool(
         &self,
         tool_name: &str,
         arguments: Value,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Content>, ToolError>> + Send + 'static>>;
-    fn list_resources(&self) -> Vec<mcp_core::resource::Resource>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Content>, ToolError>> + Send + '_>>;
+    fn list_resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Resource>, ToolError>> + Send + '_>>;
+
     fn read_resource(
         &self,
         uri: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ResourceError>> + Send + 'static>>;
-    fn list_prompts(&self) -> Vec<Prompt>;
+    ) -> Pin<Box<dyn Future<Output = Result<String, ResourceError>> + Send + '_>>;
+    fn list_prompts(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Prompt>, ToolError>> + Send + '_>>;
     fn get_prompt(&self, prompt_name: &str) -> PromptFuture;
 
     // Helper method to create base response
@@ -113,7 +120,7 @@ pub trait Router: Send + Sync + 'static {
     fn handle_initialize(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
             let result = InitializeResult {
                 protocol_version: "2024-11-05".to_string(),
@@ -138,9 +145,12 @@ pub trait Router: Send + Sync + 'static {
     fn handle_tools_list(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
-            let tools = self.list_tools();
+            let tools = self
+                .list_tools()
+                .await
+                .map_err(|e| RouterError::Internal(format!("Error listing tools: {}", e)))?;
 
             let result = ListToolsResult {
                 tools,
@@ -159,7 +169,7 @@ pub trait Router: Send + Sync + 'static {
     fn handle_tools_call(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
             let params = req
                 .params
@@ -196,9 +206,12 @@ pub trait Router: Send + Sync + 'static {
     fn handle_resources_list(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
-            let resources = self.list_resources();
+            let resources = self
+                .list_resources()
+                .await
+                .map_err(|e| RouterError::Internal(format!("Error listing resources: {}", e)))?;
 
             let result = ListResourcesResult {
                 resources,
@@ -217,7 +230,7 @@ pub trait Router: Send + Sync + 'static {
     fn handle_resources_read(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
             let params = req
                 .params
@@ -251,9 +264,12 @@ pub trait Router: Send + Sync + 'static {
     fn handle_prompts_list(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
-            let prompts = self.list_prompts();
+            let prompts = self
+                .list_prompts()
+                .await
+                .map_err(|e| RouterError::Internal(format!("Error listing resources: {}", e)))?;
 
             let result = ListPromptsResult { prompts };
 
@@ -270,7 +286,7 @@ pub trait Router: Send + Sync + 'static {
     fn handle_prompts_get(
         &self,
         req: JsonRpcRequest,
-    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send {
+    ) -> impl Future<Output = Result<JsonRpcResponse, RouterError>> + Send + '_ {
         async move {
             // Validate and extract parameters
             let params = req
@@ -292,6 +308,8 @@ pub trait Router: Send + Sync + 'static {
             // Fetch the prompt definition first
             let prompt = self
                 .list_prompts()
+                .await
+                .map_err(|e| RouterError::Internal(format!("Error listing prompts: {}", e)))?
                 .into_iter()
                 .find(|p| p.name == prompt_name)
                 .ok_or_else(|| {
@@ -418,13 +436,17 @@ where
                 "resources/read" => this.handle_resources_read(req).await,
                 "prompts/list" => this.handle_prompts_list(req).await,
                 "prompts/get" => this.handle_prompts_get(req).await,
+                "ping" => {
+                    let mut response = this.create_response(req.id);
+                    response.result = Some(Value::Object(Map::new()));
+                    Ok(response)
+                }
                 _ => {
                     let mut response = this.create_response(req.id);
                     response.error = Some(RouterError::MethodNotFound(req.method).into());
                     Ok(response)
                 }
             };
-
             result.map_err(BoxError::from)
         })
     }

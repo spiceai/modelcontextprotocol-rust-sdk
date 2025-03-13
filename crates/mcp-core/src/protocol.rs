@@ -53,6 +53,7 @@ pub enum JsonRpcMessage {
     Response(JsonRpcResponse),
     Notification(JsonRpcNotification),
     Error(JsonRpcError),
+    Empty(EmptyResult),
     Nil, // used to respond to notifications
 }
 
@@ -234,7 +235,7 @@ pub struct GetPromptResult {
     pub messages: Vec<PromptMessage>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EmptyResult {}
 
 #[cfg(test)]
