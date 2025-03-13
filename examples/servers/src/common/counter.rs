@@ -61,43 +61,48 @@ impl mcp_server::Router for CounterRouter {
             .build()
     }
 
-    fn list_tools(&self) -> Vec<Tool> {
-        vec![
-            Tool::new(
-                "increment".to_string(),
-                "Increment the counter by 1".to_string(),
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }),
-            ),
-            Tool::new(
-                "decrement".to_string(),
-                "Decrement the counter by 1".to_string(),
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }),
-            ),
-            Tool::new(
-                "get_value".to_string(),
-                "Get the current counter value".to_string(),
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }),
-            ),
-        ]
+    fn list_tools(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<mcp_core::tool::Tool>, ToolError>> + Send + 'static>>
+    {
+        Box::pin(async move {
+            Ok(vec![
+                Tool::new(
+                    "increment".to_string(),
+                    "Increment the counter by 1".to_string(),
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }),
+                ),
+                Tool::new(
+                    "decrement".to_string(),
+                    "Decrement the counter by 1".to_string(),
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }),
+                ),
+                Tool::new(
+                    "get_value".to_string(),
+                    "Get the current counter value".to_string(),
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }),
+                ),
+            ])
+        })
     }
 
     fn call_tool(
         &self,
         tool_name: &str,
         _arguments: Value,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Content>, ToolError>> + Send + 'static>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Content>, ToolError>> + Send + '_>> {
         let this = self.clone();
         let tool_name = tool_name.to_string();
 
@@ -120,17 +125,21 @@ impl mcp_server::Router for CounterRouter {
         })
     }
 
-    fn list_resources(&self) -> Vec<Resource> {
-        vec![
-            self._create_resource_text("str:////Users/to/some/path/", "cwd"),
-            self._create_resource_text("memo://insights", "memo-name"),
-        ]
+    fn list_resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Resource>, ToolError>> + Send + '_>> {
+        Box::pin(async move {
+            Ok(vec![
+                self._create_resource_text("str:////Users/to/some/path/", "cwd"),
+                self._create_resource_text("memo://insights", "memo-name"),
+            ])
+        })
     }
 
     fn read_resource(
         &self,
         uri: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ResourceError>> + Send + 'static>> {
+    ) -> Pin<Box<dyn Future<Output = Result<String, ResourceError>> + Send + '_>> {
         let uri = uri.to_string();
         Box::pin(async move {
             match uri.as_str() {
@@ -151,22 +160,26 @@ impl mcp_server::Router for CounterRouter {
         })
     }
 
-    fn list_prompts(&self) -> Vec<Prompt> {
-        vec![Prompt::new(
-            "example_prompt",
-            Some("This is an example prompt that takes one required agrument, message"),
-            Some(vec![PromptArgument {
-                name: "message".to_string(),
-                description: Some("A message to put in the prompt".to_string()),
-                required: Some(true),
-            }]),
-        )]
+    fn list_prompts(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Prompt>, ToolError>> + Send + '_>> {
+        Box::pin(async move {
+            Ok(vec![Prompt::new(
+                "example_prompt",
+                Some("This is an example prompt that takes one required agrument, message"),
+                Some(vec![PromptArgument {
+                    name: "message".to_string(),
+                    description: Some("A message to put in the prompt".to_string()),
+                    required: Some(true),
+                }]),
+            )])
+        })
     }
 
     fn get_prompt(
         &self,
         prompt_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, PromptError>> + Send + 'static>> {
+    ) -> Pin<Box<dyn Future<Output = Result<String, PromptError>> + Send + '_>> {
         let prompt_name = prompt_name.to_string();
         Box::pin(async move {
             match prompt_name.as_str() {
