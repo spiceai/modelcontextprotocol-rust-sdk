@@ -1,12 +1,19 @@
+
+
 [package]
 name = "mcp-client-examples"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.5"
+edition = "2024"
 publish = false
 
 [dependencies]
-mcp-client = { path = "../../crates/mcp-client" }
-mcp-core = { path = "../../crates/mcp-core" }
+rmcp = { path = "../../crates/rmcp", features = [
+    "client",
+    "transport-sse",
+    "transport-child-process",
+    "tower",
+    "auth"
+] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -15,19 +22,26 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.8"
 futures = "0.3"
 anyhow = "1.0"
+url = "2.4"
+tower = "0.5"
+axum = "0.8"
 
 [[example]]
-name = "clients"
-path = "src/clients.rs"
-
-[[example]]
-name = "sse"
+name = "clients_sse"
 path = "src/sse.rs"
 
 [[example]]
-name = "stdio"
-path = "src/stdio.rs"
+name = "clients_std_io"
+path = "src/std_io.rs"
 
 [[example]]
-name = "stdio_integration"
-path = "src/stdio_integration.rs"
+name = "clients_everything_stdio"
+path = "src/everything_stdio.rs"
+
+[[example]]
+name = "clients_collection"
+path = "src/collection.rs"
+
+[[example]]
+name = "oauth_client"
+path = "src/oauth_client.rs"

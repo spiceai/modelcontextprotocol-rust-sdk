@@ -1,2 +1,3 @@
+pub mod calculator;
 pub mod counter;
-pub mod jsonrpc_frame_codec;
+pub mod generic_service;
