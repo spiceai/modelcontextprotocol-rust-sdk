@@ -6,14 +6,13 @@ use std::{
 use rmcp::{
     ClientHandler, Error as McpError, RoleClient, RoleServer, ServerHandler,
     model::*,
-    service::{Peer, RequestContext},
+    service::{NotificationContext, RequestContext},
 };
 use serde_json::json;
 use tokio::sync::Notify;
 
 #[derive(Clone)]
 pub struct TestClientHandler {
-    pub peer: Option<Peer<RoleClient>>,
     pub honor_this_server: bool,
     pub honor_all_servers: bool,
     pub receive_signal: Arc<Notify>,
@@ -24,7 +23,6 @@ impl TestClientHandler {
     #[allow(dead_code)]
     pub fn new(honor_this_server: bool, honor_all_servers: bool) -> Self {
         Self {
-            peer: None,
             honor_this_server,
             honor_all_servers,
             receive_signal: Arc::new(Notify::new()),
@@ -40,7 +38,6 @@ impl TestClientHandler {
         received_messages: Arc<Mutex<Vec<LoggingMessageNotificationParam>>>,
     ) -> Self {
         Self {
-            peer: None,
             honor_this_server,
             honor_all_servers,
             receive_signal,
@@ -50,14 +47,6 @@ impl TestClientHandler {
 }
 
 impl ClientHandler for TestClientHandler {
-    fn get_peer(&self) -> Option<Peer<RoleClient>> {
-        self.peer.clone()
-    }
-
-    fn set_peer(&mut self, peer: Peer<RoleClient>) {
-        self.peer = Some(peer);
-    }
-
     async fn create_message(
         &self,
         params: CreateMessageRequestParam,
@@ -95,6 +84,7 @@ impl ClientHandler for TestClientHandler {
     fn on_logging_message(
         &self,
         params: LoggingMessageNotificationParam,
+        _context: NotificationContext<RoleClient>,
     ) -> impl Future<Output = ()> + Send + '_ {
         let receive_signal = self.receive_signal.clone();
         let received_messages = self.received_messages.clone();
