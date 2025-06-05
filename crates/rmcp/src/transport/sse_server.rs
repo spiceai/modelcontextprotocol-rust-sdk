@@ -3,7 +3,7 @@ use std::{collections::HashMap, io, net::SocketAddr, sync::Arc, time::Duration};
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::StatusCode,
+    http::{StatusCode, request::Parts},
     response::{
         Response,
         sse::{Event, KeepAlive, Sse},
@@ -18,8 +18,8 @@ use tracing::Instrument;
 use crate::{
     RoleServer, Service,
     model::ClientJsonRpcMessage,
-    service::{RxJsonRpcMessage, TxJsonRpcMessage},
-    transport::common::axum::{DEFAULT_AUTO_PING_INTERVAL, SessionId, session_id},
+    service::{RxJsonRpcMessage, TxJsonRpcMessage, serve_directly_with_ct},
+    transport::common::server_side_http::{DEFAULT_AUTO_PING_INTERVAL, SessionId, session_id},
 };
 
 type TxStore =
@@ -64,15 +64,17 @@ pub struct PostEventQuery {
 async fn post_event_handler(
     State(app): State<App>,
     Query(PostEventQuery { session_id }): Query<PostEventQuery>,
-    Json(message): Json<ClientJsonRpcMessage>,
+    parts: Parts,
+    Json(mut message): Json<ClientJsonRpcMessage>,
 ) -> Result<StatusCode, StatusCode> {
-    tracing::debug!(session_id, ?message, "new client message");
+    tracing::debug!(session_id, ?parts, ?message, "new client message");
     let tx = {
         let rg = app.txs.read().await;
         rg.get(session_id.as_str())
             .ok_or(StatusCode::NOT_FOUND)?
             .clone()
     };
+    message.insert_extension(parts);
     if tx.send(message).await.is_err() {
         tracing::error!("send message error");
         return Err(StatusCode::GONE);
@@ -82,13 +84,16 @@ async fn post_event_handler(
 
 async fn sse_handler(
     State(app): State<App>,
+    parts: Parts,
 ) -> Result<Sse<impl Stream<Item = Result<Event, io::Error>>>, Response<String>> {
     let session = session_id();
-    tracing::info!(%session, "sse connection");
+    tracing::info!(%session, ?parts, "sse connection");
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
     use tokio_util::sync::PollSender;
     let (from_client_tx, from_client_rx) = tokio::sync::mpsc::channel(64);
     let (to_client_tx, to_client_rx) = tokio::sync::mpsc::channel(64);
+    let to_client_tx_clone = to_client_tx.clone();
+
     app.txs
         .write()
         .await
@@ -123,6 +128,19 @@ async fn sse_handler(
             Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
         }
     }));
+
+    tokio::spawn(async move {
+        // Wait for connection closure
+        to_client_tx_clone.closed().await;
+
+        // Clean up session
+        let session_id = session.clone();
+        let tx_store = app.txs.clone();
+        let mut txs = tx_store.write().await;
+        txs.remove(&session_id);
+        tracing::debug!(%session_id, "Closed session and cleaned up resources");
+    });
+
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(ping_interval)))
 }
 
@@ -271,7 +289,31 @@ impl SseServer {
                 let service = service_provider();
                 let ct = self.config.ct.child_token();
                 tokio::spawn(async move {
-                    let server = service.serve_with_ct(transport, ct).await?;
+                    let server = service
+                        .serve_with_ct(transport, ct)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    server.waiting().await?;
+                    tokio::io::Result::Ok(())
+                });
+            }
+        });
+        ct
+    }
+
+    /// This allows you to skip the initialization steps for incoming request.
+    pub fn with_service_directly<S, F>(mut self, service_provider: F) -> CancellationToken
+    where
+        S: Service<RoleServer>,
+        F: Fn() -> S + Send + 'static,
+    {
+        let ct = self.config.ct.clone();
+        tokio::spawn(async move {
+            while let Some(transport) = self.next_transport().await {
+                let service = service_provider();
+                let ct = self.config.ct.child_token();
+                tokio::spawn(async move {
+                    let server = serve_directly_with_ct(service, transport, None, ct);
                     server.waiting().await?;
                     tokio::io::Result::Ok(())
                 });

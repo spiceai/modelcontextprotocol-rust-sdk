@@ -14,7 +14,15 @@ use crate::{
 };
 /// A shortcut for generating a JSON schema for a type.
 pub fn schema_for_type<T: JsonSchema>() -> JsonObject {
-    let schema = schemars::r#gen::SchemaGenerator::default().into_root_schema_for::<T>();
+    let mut settings = schemars::r#gen::SchemaSettings::default();
+    settings.option_nullable = true;
+    settings.option_add_null_type = false;
+    settings.definitions_path = "#/components/schemas/".to_owned();
+    settings.meta_schema = None;
+    settings.visitors = Vec::default();
+    settings.inline_subschemas = false;
+    let generator = settings.into_generator();
+    let schema = generator.into_root_schema_for::<T>();
     let object = serde_json::to_value(schema).expect("failed to serialize schema");
     match object {
         serde_json::Value::Object(object) => object,
@@ -77,6 +85,9 @@ impl<'service, S> ToolCallContext<'service, S> {
     }
     pub fn name(&self) -> &str {
         &self.name
+    }
+    pub fn request_context(&self) -> &RequestContext<RoleServer> {
+        &self.request_context
     }
 }
 
@@ -276,6 +287,75 @@ impl<'a, S> FromToolCallContextPart<'a, S> for JsonObject {
     }
 }
 
+impl<'a, S> FromToolCallContextPart<'a, S> for crate::model::Extensions {
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        let extensions = context.request_context.extensions.clone();
+        Ok((extensions, context))
+    }
+}
+
+pub struct Extension<T>(pub T);
+
+impl<'a, S, T> FromToolCallContextPart<'a, S> for Extension<T>
+where
+    T: Send + Sync + 'static + Clone,
+{
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        let extension = context
+            .request_context
+            .extensions
+            .get::<T>()
+            .cloned()
+            .ok_or_else(|| {
+                crate::Error::invalid_params(
+                    format!("missing extension {}", std::any::type_name::<T>()),
+                    None,
+                )
+            })?;
+        Ok((Extension(extension), context))
+    }
+}
+
+impl<'a, S> FromToolCallContextPart<'a, S> for crate::Peer<RoleServer> {
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        let peer = context.request_context.peer.clone();
+        Ok((peer, context))
+    }
+}
+
+impl<'a, S> FromToolCallContextPart<'a, S> for crate::model::Meta {
+    fn from_tool_call_context_part(
+        mut context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        let mut meta = crate::model::Meta::default();
+        std::mem::swap(&mut meta, &mut context.request_context.meta);
+        Ok((meta, context))
+    }
+}
+
+pub struct RequestId(pub crate::model::RequestId);
+impl<'a, S> FromToolCallContextPart<'a, S> for RequestId {
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        Ok((RequestId(context.request_context.id.clone()), context))
+    }
+}
+
+impl<'a, S> FromToolCallContextPart<'a, S> for RequestContext<RoleServer> {
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), crate::Error> {
+        Ok((context.request_context.clone(), context))
+    }
+}
+
 impl<'s, S> ToolCallContext<'s, S> {
     pub fn invoke<H, A>(self, h: H) -> H::Fut
     where
@@ -423,6 +503,7 @@ impl<S> ToolBox<S> {
 }
 
 #[cfg(feature = "macros")]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
 #[macro_export]
 macro_rules! tool_box {
     (@pin_add $callee: ident, $attr: expr, $f: expr) => {
